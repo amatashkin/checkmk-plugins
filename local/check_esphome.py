@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+
+# Requires module aioesphomeapi
+# python3 -m pip install aioesphomeapi
+
+# Import required libs for your plugin
+import argparse
+import asyncio
+
+import aioesphomeapi
+
+# Return codes expected by Nagios
+codes = ['OK', 'WARNING', 'CRITICAL', 'UNKNOWN']
+
+
+# Connect to device and get info
+async def device_info():
+    """Connect to an ESPHome device and get device info."""
+
+    # Establish connection
+    api = aioesphomeapi.APIClient(args.hostname, args.port, args.password or "", noise_psk=args.noise_psk)
+    await api.connect(login=True)
+
+    # Get device info
+    info = await api.device_info()
+    return info
+
+# Create the argument parser
+my_parser = argparse.ArgumentParser(description='Check ESPHome node')
+
+# Add the arguments
+
+my_parser.add_argument('hostname', metavar='<hostname>', type=str, help='The hostname of the device')
+my_parser.add_argument('-P', '--port', metavar="<port>", help="Network port to connect to (defaults to 6053)", dest='port', default=6053, type=int)
+my_parser.add_argument('--password', metavar='<password>', type=str, help='The esphome api password')
+my_parser.add_argument('--noise_psk', metavar='<noise_psk>', type=str, help='The esphome api encryption')
+
+#noise_psk
+
+# Execute the parse_args() method
+args = my_parser.parse_args()
+
+# Check logic starts here
+
+try:
+    data = asyncio.run(device_info())
+except Exception as e:
+    STATUS = 2
+    MESSAGE = str(e)
+else:
+    STATUS = 0
+    MESSAGE = f"name:{data.name} mac_address:{data.mac_address} model:{data.model} version:{data.esphome_version}"
+
+# Print the MESSAGE for nagios
+print(f"{codes[STATUS]} - {MESSAGE}")
+
+# Exit with status code
+raise SystemExit(STATUS)
