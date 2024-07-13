@@ -1,0 +1,57 @@
+#!/bin/bash
+#
+# Monitor the expiration date of certificates in Traefik.
+
+acmefile=/opt/appdata/traefik/acme.json
+resolver=digitalocean
+
+MARK_CRIT=7
+MARK_WARN=28
+MSG_UNKN="UNKNOWN - Can not parse certificate"
+MSG_CRIT="CRIT - Certificate expiring"
+MSG_WARN="WARN - Renewal is due"
+MSG_OK="OK - Last scanned at $(date)"
+
+USAGE="$(basename "$0") <will add later>"
+
+exit_jq() {
+    echo "
+You must have the binary 'jq' to use this.
+
+${USAGE}" >&2
+    exit 1
+}
+
+bad_acme() {
+    echo "
+There was a problem parsing your acme.json file.
+
+${USAGE}" >&2
+    exit 2
+}
+
+jq=$(command -v jq) || exit_jq
+domains=$(jq -r ".${resolver}"'.Certificates[].domain.main' ${acmefile}) || bad_acme
+
+for domain in $domains; do
+    # Traefik stores a cert bundle for each domain.  Within this cert
+    # bundle there is both proper the certificate and the Let's Encrypt CA
+    cert=$(jq -e -r --arg domain "$domain" ".${resolver}"'.Certificates[] |
+            select (.domain.main == $domain )| .certificate' ${acmefile} ) || bad_acme
+    name="cert.expire.${domain}"
+    valid_until="$(date -d "$(echo $cert | base64 -d | openssl x509 -noout -enddate | cut -d= -f 2)" +%s)"
+    today="$(date +%s)"
+    seconds_left="$(( valid_until - today ))"
+    days_left="$(( seconds_left / 60 / 60 / 24 ))"
+    re='^[0-9]+$'
+    if [[ ! $days_left =~ $re ]]; then
+        echo "3 ${name} - ${MSG_UNKN}"
+    fi
+    if (( days_left <= MARK_CRIT )); then
+        echo "2 ${name} days=${days_left};;;0;90 ${MSG_CRIT}"
+    elif (( days_left <= MARK_WARN )); then
+        echo "1 ${name} days=${days_left};;;0;90 ${MSG_WARN}"
+    else
+    echo "0 ${name} days=${days_left};;;0;90 ${MSG_OK}"
+    fi
+done
