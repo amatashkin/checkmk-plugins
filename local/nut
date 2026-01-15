@@ -1,0 +1,155 @@
+#!/bin/bash
+# CheckMK local check for UPS status using NUT
+# Copy to /usr/lib/check_mk_agent/local/ and make it executable
+
+# Configuration
+UPS_NAME="ups"  # Default UPS name in NUT
+HOSTNAME="localhost"
+PORT="3493"  # Default NUT port
+USERNAME=""  # Leave empty if not using authentication
+PASSWORD=""  # Leave empty if not using authentication
+
+# Exit codes for CheckMK
+OK=0
+WARNING=1
+CRITICAL=2
+UNKNOWN=3
+
+# Check if upsc command is available
+if ! command -v upsc &>/dev/null; then
+    echo "3 UPS_NUT_Status - UNKNOWN: upsc command not found, please install NUT utilities"
+    exit $UNKNOWN
+fi
+
+# Function to get UPS variable with error handling
+get_ups_var() {
+    local var=$1
+    local value
+    
+    if [[ -n "$USERNAME" && -n "$PASSWORD" ]]; then
+        value=$(upsc "$UPS_NAME"@"$HOSTNAME":"$PORT" "$var" -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
+    else
+        value=$(upsc "$UPS_NAME"@"$HOSTNAME":"$PORT" "$var" 2>/dev/null)
+    fi
+    
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    echo "$value"
+}
+
+# Check UPS connection
+if ! get_ups_var "ups.status" >/dev/null; then
+    echo "2 UPS_NUT_Status - CRITICAL: Cannot connect to UPS $UPS_NAME@$HOSTNAME:$PORT"
+    exit $CRITICAL
+fi
+
+# Get UPS status
+UPS_STATUS=$(get_ups_var "ups.status")
+if [ $? -ne 0 ]; then
+    echo "3 UPS_NUT_Status - UNKNOWN: Cannot retrieve UPS status"
+    exit $UNKNOWN
+fi
+
+# Get battery charge level
+BATTERY_CHARGE=$(get_ups_var "battery.charge")
+if [ $? -ne 0 ]; then
+    BATTERY_CHARGE="unknown"
+fi
+
+# Get battery runtime
+BATTERY_RUNTIME=$(get_ups_var "battery.runtime")
+if [ $? -ne 0 ]; then
+    BATTERY_RUNTIME="unknown"
+else
+    # Convert seconds to minutes for better readability
+    BATTERY_RUNTIME=$(echo "scale=1; $BATTERY_RUNTIME / 60" | bc)
+fi
+
+# Get input voltage
+INPUT_VOLTAGE=$(get_ups_var "input.voltage")
+if [ $? -ne 0 ]; then
+    INPUT_VOLTAGE="unknown"
+fi
+
+# Get load percentage
+LOAD_PERCENT=$(get_ups_var "ups.load")
+if [ $? -ne 0 ]; then
+    LOAD_PERCENT="unknown"
+fi
+
+# Determine status level based on UPS status
+# Determine status level based on UPS status
+STATUS_LEVEL=$OK
+STATUS_TEXT="OK"
+
+case "$UPS_STATUS" in
+    *"OL"*)
+        # Online - everything is normal
+        STATUS_TEXT="Online"
+        ;;
+    *"OB"*)
+        # On Battery - power failure, this is warning
+        STATUS_LEVEL=$WARNING
+        STATUS_TEXT="On Battery"
+        ;;
+    *"LB"*)
+        # Low Battery - critical
+        STATUS_LEVEL=$CRITICAL
+        STATUS_TEXT="Low Battery"
+        ;;
+    *"CHRG"*)
+        # Charging - ok but worth noting
+        STATUS_TEXT="Charging"
+        ;;
+    *"DISCHRG"*)
+        # Discharging - warning
+        STATUS_LEVEL=$WARNING
+        STATUS_TEXT="Discharging"
+        ;;
+    *"BYPASS"*)
+        # Bypass - critical
+        STATUS_LEVEL=$CRITICAL
+        STATUS_TEXT="Bypass Mode"
+        ;;
+    *"CAL"*)
+        # Calibration - warning
+        STATUS_LEVEL=$WARNING
+        STATUS_TEXT="Calibration Mode"
+        ;;
+    *"OFF"*)
+        # UPS is off - critical
+        STATUS_LEVEL=$CRITICAL
+        STATUS_TEXT="UPS is OFF"
+        ;;
+    *"OVER"*)
+        # Overload - critical
+        STATUS_LEVEL=$CRITICAL
+        STATUS_TEXT="Overload"
+        ;;
+    *)
+        # Unknown status
+        STATUS_LEVEL=$UNKNOWN
+        STATUS_TEXT="Unknown: $UPS_STATUS"
+        ;;
+esac
+
+# Generate performance data
+PERFDATA="battery_charge=$BATTERY_CHARGE%;50;30;0;100|"
+
+if [[ "$BATTERY_RUNTIME" != "unknown" ]]; then
+    PERFDATA+="battery_runtime=${BATTERY_RUNTIME}min;20;15;0;|"
+fi
+
+if [[ "$INPUT_VOLTAGE" != "unknown" ]]; then
+    PERFDATA+="input_voltage=${INPUT_VOLTAGE}V;244;225;;|"
+fi
+
+if [[ "$LOAD_PERCENT" != "unknown" ]]; then
+    PERFDATA+="load_percent=${LOAD_PERCENT}%;80;90;0;100 "
+fi
+
+# Output in CheckMK local check format
+echo "$STATUS_LEVEL \"UPS $UPS_NAME\" $PERFDATA UPS Status: $STATUS_TEXT"
+
+exit $STATUS_LEVEL
