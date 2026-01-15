@@ -1,6 +1,5 @@
 #!/bin/bash
-#
-# Monitor the expiration date of certificates in Traefik.
+# checkmk localcheck for Traefik certificates expiration
 
 acmefile=/opt/appdata/traefik/acme.json
 resolver=digitalocean
@@ -38,7 +37,7 @@ for domain in $domains; do
     # bundle there is both proper the certificate and the Let's Encrypt CA
     cert=$(jq -e -r --arg domain "$domain" ".${resolver}"'.Certificates[] |
             select (.domain.main == $domain )| .certificate' ${acmefile} ) || bad_acme
-    name="cert.expire.${domain}"
+    name="\"CERT ${domain}\""
     valid_until="$(date -d "$(echo $cert | base64 -d | openssl x509 -noout -enddate | cut -d= -f 2)" +%s)"
     today="$(date +%s)"
     seconds_left="$(( valid_until - today ))"
@@ -46,12 +45,11 @@ for domain in $domains; do
     re='^[0-9]+$'
     if [[ ! $days_left =~ $re ]]; then
         echo "3 ${name} - ${MSG_UNKN}"
-    fi
-    if (( days_left <= MARK_CRIT )); then
+    elif (( days_left <= MARK_CRIT )); then
         echo "2 ${name} days=${days_left};;;0;90 ${MSG_CRIT}"
     elif (( days_left <= MARK_WARN )); then
         echo "1 ${name} days=${days_left};;;0;90 ${MSG_WARN}"
     else
-    echo "0 ${name} days=${days_left};;;0;90 ${MSG_OK}"
+        echo "0 ${name} days=${days_left};$MARK_WARN;$MARK_CRIT;0;90 ${MSG_OK}"
     fi
 done
