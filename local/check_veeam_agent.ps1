@@ -23,7 +23,7 @@ $logfile = $logfiles | Sort-Object LastAccessTime -Descending | Select-Object -F
 
 # Parse the Logfile and Extract the expected information
 $logline = (Select-String -Path $logfile -Pattern 'Job session .*' | Select-Object -Last 1).Line
-$time = ($logline | Select-String -Pattern "\[\d+.\d+.\d+ \d+:\d+:\d+\]").Matches[0].Value.trimstart("[").trimend("]")
+$time = ($logline | Select-String -Pattern "\[\d+.\d+.\d+ \d+:\d+:\d+.+\d+\d+\d+\]").Matches[0].Value.trimstart("[").trimend("]")
 
 if ($logline | Select-String -Pattern 'Job session is running') {
     $jobstatus = "Running"
